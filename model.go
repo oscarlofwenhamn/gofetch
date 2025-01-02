@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +17,9 @@ type model struct {
 	Hostname      string
 	Username      string
 	Os            string
-	Kernel        string
+	KernelName    string
+	KernelVersion string
+	KernelMachine string
 	Uptime        time.Time
 	Packages      int
 	Shell         string
@@ -70,7 +74,7 @@ func (m model) View() string {
 	return fmt.Sprintf(`
     %s@%s
     %s
-    OS: %s
+    OS: %s %s
     Kernel: %s
     Uptime: %s
     Packages: %d
@@ -87,7 +91,8 @@ func (m model) View() string {
 		m.Hostname,
 		strings.Repeat("-", len(m.Hostname)+len(m.Username)+1),
 		m.Os,
-		m.Kernel,
+		m.KernelMachine,
+		m.KernelVersion,
 		time.Since(m.Uptime),
 		m.Packages,
 		m.Shell,
@@ -106,8 +111,8 @@ func (m *model) fetchData() {
 	start := time.Now()
 	m.Hostname = getHostname()
 	m.Username = getUsername()
+	m.KernelName, m.KernelVersion, m.KernelMachine = getKernel()
 	m.Os = getOS()
-	m.Kernel = getKernel()
 	m.Packages = getPackages()
 	m.Shell = getShell()
 	m.Theme = getTheme()
@@ -133,31 +138,53 @@ func getGPU() string {
 }
 
 func getCPU() string {
-	cpuinfo, err := os.Open("/proc/cpuinfo")
-	if err != nil {
-		log.Warn("error when reading cpuinfo", "err", err)
-	}
-	defer cpuinfo.Close()
-
-	key := "model name"
+	modelNameKey := "model name"
 	var modelName string
 
-	s := bufio.NewScanner(cpuinfo)
-	for s.Scan() {
-		line := s.Text()
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 && strings.TrimSpace(parts[0]) == key {
-			modelName = strings.TrimSpace(parts[1])
-		}
+	mHzKey := "cpu MHz"
+	var cpuGHz float64
+
+	vals, err := getFromKeyValueFile("/proc/cpuinfo", ":", []string{modelNameKey, mHzKey})
+	if err != nil {
+		log.Warn("error when reading values from cpuinfo", "err", err)
 	}
 
-	// TODO: Add CPU Hz
+	modelName, ok := vals[modelNameKey]
+	if !ok {
+		log.Warn("no model name found")
+	}
 
-	return modelName
+	cpuMHz, ok := vals[mHzKey]
+	if !ok {
+		log.Warn("no clock speed found")
+	} else {
+
+		cpuGHz, err = strconv.ParseFloat(strings.TrimSpace(cpuMHz), 32)
+		if err != nil {
+			log.Warn("error when converting cpu hz", "err", err)
+		}
+		cpuGHz /= 1000
+	}
+
+	// TODO: Add CPU siblings(?)
+	// QUESTION: Is it accurate and correct to mathematically round clock speed,
+	// or should it rather be truncated?
+	return fmt.Sprintf("%s @ %.3fGHz", modelName, cpuGHz)
 }
 
 func getTerminal() string {
-	return "Not implemented"
+	var term string
+	if os.Getenv("WT_SESSION") != "" {
+		term = "Windows Terminal"
+	}
+	if program := os.Getenv("TERM_PROGRAM"); program != "" {
+		if term == "" {
+			term = program
+		} else {
+			term += " (" + program + ")"
+		}
+	}
+	return term
 }
 
 func getIcons() string {
@@ -176,12 +203,25 @@ func getPackages() int {
 	return 0
 }
 
-func getKernel() string {
-	return "Not implemented"
+func getKernel() (string, string, string) {
+	unameCmd := exec.Command("uname", "-smr")
+	unameOut, err := unameCmd.Output()
+	if err != nil {
+		log.Warn("error when running uname command", "err", err)
+	}
+	info := strings.Split(strings.TrimSpace(string(unameOut)), " ")
+	log.Debug(info)
+	return info[0], info[1], info[2]
 }
 
 func getOS() string {
-	return "Not implemented"
+	osNameKey := "PRETTY_NAME"
+	vals, err := getFromKeyValueFile("/etc/os-release", "=", []string{osNameKey})
+	if err != nil {
+		log.Warn("error when reading from os-release")
+	}
+
+	return strings.Trim(vals[osNameKey], "\"")
 }
 
 func getHostname() string {
@@ -192,4 +232,33 @@ func getHostname() string {
 func getUsername() string {
 	username := os.Getenv("USER")
 	return username
+}
+
+func getFromKeyValueFile(path, separator string, keys []string) (map[string]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	s := bufio.NewScanner(file)
+
+	vals := make(map[string]string)
+	for s.Scan() {
+		line := s.Text()
+		parts := strings.SplitN(line, separator, 2)
+
+		if len(parts) != 2 {
+			continue
+		}
+
+		key := strings.TrimSpace(parts[0])
+		for i, k := range keys {
+			if key == k {
+				keys = append(keys[:i], keys[i+1:]...)
+				vals[k] = strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return vals, nil
 }
