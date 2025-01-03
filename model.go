@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,7 +21,7 @@ type model struct {
 	KernelName    string
 	KernelVersion string
 	KernelMachine string
-	Uptime        time.Time
+	Uptime        time.Duration
 	Packages      int
 	Shell         string
 	Theme         string
@@ -36,7 +37,6 @@ type model struct {
 
 func initialModel(follow bool) model {
 	log.Debug("Initializing")
-
 	return model{Follow: follow}
 }
 
@@ -93,7 +93,7 @@ func (m model) View() string {
 		m.Os,
 		m.KernelMachine,
 		m.KernelVersion,
-		time.Since(m.Uptime),
+		m.Uptime,
 		m.Packages,
 		m.Shell,
 		m.Theme,
@@ -113,6 +113,7 @@ func (m *model) fetchData() {
 	m.Username = getUsername()
 	m.KernelName, m.KernelVersion, m.KernelMachine = getKernel()
 	m.Os = getOS()
+	m.Uptime = getUptime()
 	m.Packages = getPackages()
 	m.Shell = getShell()
 	m.Theme = getTheme()
@@ -123,6 +124,25 @@ func (m *model) fetchData() {
 	m.MemoryCurrent = getCurrentMemory()
 	m.MemoryTotal = getTotalMemory()
 	m.FetchSpeed = time.Since(start)
+}
+
+func getUptime() time.Duration {
+	b, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		log.Warn("error when trying to open /proc/uptime", "err", err)
+		return 0
+	}
+
+	up := string(bytes.Split(b, []byte{' '})[0])
+
+	uptime, err := strconv.ParseFloat(up, 64)
+	if err != nil {
+		log.Warn("error when parsing uptime float", "err", err, "uptime", uptime)
+		return 0
+	}
+	uptimeSeconds := int(uptime)
+
+	return time.Duration(uptimeSeconds) * time.Second
 }
 
 func getTotalMemory() int {
@@ -152,6 +172,7 @@ func getCPU() string {
 	modelName, ok := vals[modelNameKey]
 	if !ok {
 		log.Warn("no model name found")
+		modelName = "Invalid"
 	}
 
 	cpuMHz, ok := vals[mHzKey]
@@ -196,7 +217,25 @@ func getTheme() string {
 }
 
 func getShell() string {
-	return "Not implemented"
+	shellPath := os.Getenv("SHELL")
+	if shellPath == "" {
+		log.Warn("no shell path found")
+		return "Invalid"
+	}
+	shellVersionCommand := exec.Command(shellPath, "--version")
+	output, err := shellVersionCommand.Output()
+	if err != nil {
+		log.Warn("error when fetching shell version", "err", err)
+		return "Invalid"
+	}
+	for i, b := range output {
+		if b == '\n' {
+			output = output[:i]
+		}
+	}
+
+	// TODO: Remove "unwanted information", e.g. within ()
+	return string(output)
 }
 
 func getPackages() int {
@@ -208,6 +247,7 @@ func getKernel() (string, string, string) {
 	unameOut, err := unameCmd.Output()
 	if err != nil {
 		log.Warn("error when running uname command", "err", err)
+		return "Invalid", "Invalid", "Invalid"
 	}
 	info := strings.Split(strings.TrimSpace(string(unameOut)), " ")
 	log.Debug(info)
@@ -219,6 +259,7 @@ func getOS() string {
 	vals, err := getFromKeyValueFile("/etc/os-release", "=", []string{osNameKey})
 	if err != nil {
 		log.Warn("error when reading from os-release")
+		return "Invalid"
 	}
 
 	return strings.Trim(vals[osNameKey], "\"")
