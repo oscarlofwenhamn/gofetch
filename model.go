@@ -22,7 +22,7 @@ type model struct {
 	KernelVersion string
 	KernelMachine string
 	Uptime        time.Duration
-	Packages      int
+	Packages      string
 	Shell         string
 	Theme         string
 	Icons         string
@@ -77,7 +77,7 @@ func (m model) View() string {
     OS: %s %s
     Kernel: %s
     Uptime: %s
-    Packages: %d
+    Packages: %s
     Shell: %s
     Theme: %s
     Icons: %s
@@ -238,8 +238,27 @@ func getShell() string {
 	return string(output)
 }
 
-func getPackages() int {
-	return 0
+func getPackages() string {
+	var packageCounters []func() (string, error)
+	if _, err := exec.LookPath("dpkg"); err == nil {
+		packageCounters = append(packageCounters, GetDpkgPackageCount)
+	}
+	if _, err := exec.LookPath("snap"); err == nil {
+		packageCounters = append(packageCounters, GetSnapPackageCount)
+	}
+
+	var out string
+	for _, provider := range packageCounters {
+		count, err := provider()
+		if err != nil {
+			log.Warn("error when fetching count", "err", err)
+		}
+		if out != "" {
+			out += ", "
+		}
+		out += count
+	}
+	return out
 }
 
 func getKernel() (string, string, string) {
