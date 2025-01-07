@@ -84,7 +84,7 @@ func (m model) View() string {
     Terminal: %s
     CPU: %s
     GPU: %s
-    Memory: %d / %d
+    Memory: %.0fMiB / %.0fMiB
     Fetch speed: %s
 `,
 		m.Username,
@@ -101,8 +101,8 @@ func (m model) View() string {
 		m.Terminal,
 		m.CPU,
 		m.GPU,
-		m.MemoryCurrent,
-		m.MemoryTotal,
+		float64(m.MemoryCurrent)/(1024),
+		float64(m.MemoryTotal)/(1024),
 		m.FetchSpeed,
 	)
 }
@@ -121,9 +121,43 @@ func (m *model) fetchData() {
 	m.Terminal = getTerminal()
 	m.CPU = getCPU()
 	m.GPU = getGPU()
-	m.MemoryCurrent = getCurrentMemory()
-	m.MemoryTotal = getTotalMemory()
+	m.MemoryCurrent, m.MemoryTotal = getMemory()
 	m.FetchSpeed = time.Since(start)
+}
+
+func getMemory() (int, int) {
+	freeCmd := exec.Command("free")
+	out, err := freeCmd.Output()
+	if err != nil {
+		log.Warn("error when running free", "err", err)
+		return 0, 0
+	}
+	i := bytes.IndexByte(out, ':')
+	if i == -1 {
+		log.Warn("invalid output from free")
+		return 0, 0
+	}
+	out = bytes.TrimLeft(out[i+1:], " ")
+	total, err := readInt(out)
+	if err != nil {
+		log.Warn("error when reading total memory", "err", err)
+	}
+
+	i = bytes.IndexByte(out, ' ')
+	out = bytes.TrimLeft(out[i:], " ")
+	current, err := readInt(out)
+	if err != nil {
+		log.Warn("error when reading total memory", "err", err)
+	}
+
+	return current, total
+}
+
+func readInt(s []byte) (int, error) {
+	i := bytes.IndexByte(s, ' ')
+	b := s[:i]
+	val, err := strconv.Atoi(string(b))
+	return val, err
 }
 
 func getUptime() time.Duration {
