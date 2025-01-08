@@ -188,6 +188,20 @@ func getCurrentMemory() int {
 }
 
 func getGPU() string {
+	lspciCmd := exec.Command("lspci")
+	out, err := lspciCmd.Output()
+	if err != nil {
+		log.Warn("error when running lspci", "err", err)
+		return "Invalid"
+	}
+
+	lines := bytes.Split(out, []byte{'\n'})
+	for _, line := range lines {
+		if !bytes.Contains(line, []byte{'3', 'D'}) {
+			continue
+		}
+		return string(bytes.Replace(line, []byte("3D controller: "), []byte{}, 1))
+	}
 	return "Not implemented"
 }
 
