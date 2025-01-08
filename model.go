@@ -261,7 +261,14 @@ func getIcons() string {
 }
 
 func getTheme() string {
-	return "Not implemented"
+	gsettingsCommand := exec.Command("gsettings", "get", "org.gnome.desktop.interface", "gtk-theme")
+	out, err := gsettingsCommand.Output()
+	if err != nil {
+		log.Warn("error when running gsettings", "err", err)
+	}
+
+	// TODO: Remove hard-coded part and make more dynamic
+	return fmt.Sprintf("%s [%s]", bytes.Trim(out, "'\n"), "GTK3")
 }
 
 func getShell() string {
